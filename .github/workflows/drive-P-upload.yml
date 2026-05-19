@@ -1,0 +1,83 @@
+name: Download and Upload to Google Drive
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_url:
+        description: "Direct URL of the file to download"
+        required: true
+        type: string
+
+      output_filename:
+        description: "Optional: leave empty to auto-detect filename"
+        required: false
+        default: ""
+        type: string
+
+      drive_folder:
+        description: "Google Drive destination folder"
+        required: true
+        default: "Uploads"
+        type: string
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install rclone
+        run: |
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+
+      - name: Restore rclone config
+        run: |
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf <<'EOF'
+          ${{ secrets.RCLONE_CONFIG }}
+          EOF
+          chmod 600 ~/.config/rclone/rclone.conf
+
+      - name: Download file
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p downloads
+
+          URL="${{ inputs.download_url }}"
+          OVERRIDE_NAME="${{ inputs.output_filename }}"
+
+          if [ -n "$OVERRIDE_NAME" ]; then
+            FILENAME="$OVERRIDE_NAME"
+            curl -L \
+              --fail \
+              --retry 5 \
+              --retry-delay 10 \
+              -o "downloads/$FILENAME" \
+              "$URL"
+          else
+            cd downloads
+            curl -L \
+              --fail \
+              --retry 5 \
+              --retry-delay 10 \
+              -O -J \
+              "$URL"
+            FILENAME="$(ls -t | head -n 1)"
+            cd ..
+          fi
+
+          echo "FILENAME=$FILENAME" >> "$GITHUB_ENV"
+          echo "Saved as: $FILENAME"
+
+      - name: Show downloaded file info
+        run: |
+          ls -lh downloads/
+          echo "Detected filename: $FILENAME"
+
+      - name: Upload to Google Drive
+        run: |
+          rclone copy "downloads/$FILENAME" "piss2004:/${{ inputs.drive_folder }}/" --progress
+
+      - name: Verify upload
+        run: |
+          rclone lsf "piss2004:/${{ inputs.drive_folder }}/"
